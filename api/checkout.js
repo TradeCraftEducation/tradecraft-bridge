@@ -1,4 +1,5 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const querystring = require('querystring');
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -6,30 +7,35 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Grab data using the new 'account_id' name
-    const { grand_total, account_id, cover_fees, typeA } = req.body;
+    // 1. Parse the incoming Jotform data correctly
+    let body = '';
+    if (typeof req.body === 'string') {
+      body = querystring.parse(req.body);
+    } else {
+      body = req.body;
+    }
 
-    // 2. Gatekeeper: If they choose Invoice, bypass Stripe
+    console.log("Jotform Data Parsed:", body);
+
+    // 2. Extract the fields using the unique names
+    const { grand_total, account_id, cover_fees, typeA } = body;
+
+    // 3. Gatekeeper: If they choose Invoice, bypass Stripe
     const paymentMethod = typeA ? typeA.toString().toLowerCase() : "";
     if (paymentMethod.includes('invoice')) {
       return res.redirect(303, 'https://tradecraftfundraising.com/success');
     }
 
-    // 3. Math Setup
+    // 4. Math Setup
     const baseDonation = parseFloat(grand_total) || 0;
     if (baseDonation <= 0) throw new Error("Invalid donation amount");
     if (!account_id) throw new Error("Missing school account ID");
 
-    // Check for fee coverage choice
     const donorSaidYes = cover_fees && cover_fees.toString().toLowerCase().startsWith('y');
-    
-    // Calculate total to charge donor (Add 3.3% if they said Yes)
     const amountToCharge = donorSaidYes ? (baseDonation + 0.30) / (1 - 0.029) : baseDonation;
-    
-    // Your 3.5% TradeCraft platform fee (always based on the base donation)
     const yourFeeCents = Math.round((baseDonation * 0.035) * 100);
 
-    // 4. Create the Stripe Checkout Session
+    // 5. Create the Stripe Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
@@ -46,18 +52,16 @@ export default async function handler(req, res) {
       mode: 'payment',
       payment_intent_data: {
         application_fee_amount: yourFeeCents,
-        transfer_data: { destination: account_id }, // Sending money to the Chapter
+        transfer_data: { destination: account_id }, 
       },
       success_url: 'https://tradecraftfundraising.com/success',
       cancel_url: 'https://tradecraftfundraising.com/cancel',
     });
 
-    // 5. Redirect the donor to the secure Stripe page
     res.redirect(303, session.url);
 
   } catch (err) {
     console.error("BRIDGE ERROR:", err.message);
-    // If it fails, send them to success so you don't lose the lead
     res.redirect(303, 'https://tradecraftfundraising.com/success');
   }
 }
