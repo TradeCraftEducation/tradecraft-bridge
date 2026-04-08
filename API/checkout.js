@@ -1,46 +1,48 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 export default async function handler(req, res) {
-  // Only allow POST requests (which is what Jotform sends)
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
 
   try {
-    // 1. Get the data sent from your Jotform
-    // Note: Make sure the names below match your Jotform field "Unique Names"
-    const { donation_amount, account_id } = req.body;
+    // 1. Grab your specific Jotform field IDs
+    const { grand_total, show_slug } = req.body;
 
-    // 2. The "No-Ick" Math: Donor covers processing so you keep 5%
-    const baseAmount = parseFloat(donation_amount);
-    const totalWithFees = (baseAmount + 0.30) / (1 - 0.029);
+    // 2. Math Check
+    // We assume 'grand_total' is the FINAL amount the donor sees.
+    const finalAmountCents = Math.round(parseFloat(grand_total) * 100);
+    
+    // We calculate your 5% profit based on the UN-FEES amount.
+    // (If grand_total is $103.30, your fee is 5% of the intended $100)
+    const intendedDonation = parseFloat(grand_total) / 1.033; 
+    const yourFeeCents = Math.round((intendedDonation * 0.05) * 100);
 
-    // 3. Create the Stripe Checkout Session
+    // 3. Create the Session
     const session = await stripe.checkout.sessions.create({
-      mode: 'payment',
+      payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'usd',
-          unit_amount: Math.round(totalWithFees * 100), // Stripe uses cents
+          unit_amount: finalAmountCents,
           product_data: { name: 'Fundraiser Donation' },
         },
         quantity: 1,
       }],
+      mode: 'payment',
       payment_intent_data: {
-        application_fee_amount: Math.round(baseAmount * 0.05 * 100), // Your 5% fee
+        application_fee_amount: yourFeeCents,
         transfer_data: {
-          destination: account_id, // The acct_... ID of the school
+          destination: show_slug, // This uses your field ID
         },
       },
-      // Replace these with your actual success/cancel pages on your site
       success_url: 'https://tradecraftfundraising.com/success',
       cancel_url: 'https://tradecraftfundraising.com/cancel',
     });
 
-    // 4. Send the donor straight to the Stripe payment page
     res.redirect(303, session.url);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: 'Bridge Error: Check Field IDs' });
   }
 }
