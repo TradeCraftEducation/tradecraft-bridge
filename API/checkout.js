@@ -6,27 +6,31 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1. Grab the data from Jotform
-    const { grand_total, show_slug, cover_fees } = req.body;
-    const baseDonation = parseFloat(grand_total);
+    // 1. Get the data using your specific Jotform Unique Names
+    const { grand_total, show_slug, cover_fees, typeA } = req.body;
 
-    // 2. SMART CHECK: Did they click "Yes"?
-    // We check if cover_fees exists and starts with "Y" (covers "Yes", "YES", "yes")
+    // --- THE INVOICE GATEKEEPER ---
+    // If the donor selected the Invoice option, redirect to success and STOP.
+    if (typeA && typeA.toLowerCase().includes('invoice')) {
+      return res.redirect(303, 'https://tradecraftfundraising.com/success');
+    }
+
+    // --- THE STRIPE ENGINE ---
+    const baseDonation = parseFloat(grand_total);
     let amountToCharge;
+    
+    // Check if they opted to cover the 3.3% fee
     const donorSaidYes = cover_fees && cover_fees.toString().toLowerCase().startsWith('y');
 
     if (donorSaidYes) {
-      // Logic: Add the 3.3% bank fee (approx)
       amountToCharge = (baseDonation + 0.30) / (1 - 0.029);
     } else {
-      // Logic: No fee added
       amountToCharge = baseDonation;
     }
     
-    // 3. Your 3.5% TradeCraft Profit
+    // Your 3.5% TradeCraft Profit (based on the original donation)
     const yourFeeCents = Math.round((baseDonation * 0.035) * 100);
 
-    // 4. Create the Stripe Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
@@ -49,9 +53,12 @@ export default async function handler(req, res) {
       cancel_url: 'https://tradecraftfundraising.com/cancel',
     });
 
+    // Send the "Pay Now" donors to Stripe
     res.redirect(303, session.url);
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Bridge Error: Check Jotform Names' });
+    // Safety fallback: if anything breaks, don't show an error, just go to success
+    res.redirect(303, 'https://tradecraftfundraising.com/success');
   }
 }
