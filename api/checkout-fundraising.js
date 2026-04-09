@@ -2,69 +2,56 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const querystring = require('querystring');
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).send('Method Not Allowed');
-  }
+  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   try {
-    // 1. Parse incoming Jotform data
-    let body = '';
-    if (typeof req.body === 'string') {
-      body = querystring.parse(req.body);
-    } else {
-      body = req.body;
-    }
+    let body = typeof req.body === 'string' ? querystring.parse(req.body) : req.body;
+    const { grand_total, account_id, cover_fees, typeA, original_submission_id, submission_id } = body;
+    const finalSid = original_submission_id || submission_id;
 
-    // 2. Extract fields from Jotform
-    const { grand_total, account_id, cover_fees, typeA } = body;
-
-    // 3. Invoice Bypass (Gatekeeper)
     const paymentMethod = typeA ? typeA.toString().toLowerCase() : "";
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-fundraiser');
     }
 
-    // 4. Calculations
-    const baseDonation = parseFloat(grand_total) || 0;
-    if (baseDonation <= 0) throw new Error("Invalid donation amount");
-    if (!account_id) throw new Error("Missing school account ID");
-
-    // Fee Logic
+    const baseAmount = parseFloat(grand_total) || 0;
     const donorSaidYes = cover_fees && cover_fees.toString().toLowerCase().startsWith('y');
-    const amountToCharge = donorSaidYes ? (baseDonation + 0.30) / (1 - 0.029) : baseDonation;
-    
-    // 5% Platform Fee
-    const yourFeeCents = Math.round((baseDonation * 0.05) * 100);
+    const amountToCharge = donorSaidYes ? (baseAmount + 0.30) / (1 - 0.029) : baseAmount;
+    const totalCents = Math.round(amountToCharge * 100);
 
-    // 5. Create Stripe Session
+    // Safety Math for Platform Fee (5% for Fundraising)
+    const stripeFeeCents = Math.round((totalCents * 0.029) + 30);
+    const tradecraftProfitCents = Math.round((baseAmount * 0.05) * 100);
+    const totalApplicationFeeCents = stripeFeeCents + tradecraftProfitCents;
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
         price_data: {
           currency: 'usd',
-          unit_amount: Math.round(amountToCharge * 100),
-          product_data: { 
-            name: 'Fundraising Donation',
-            description: donorSaidYes ? 'Processing fees included' : 'Standard Donation'
-          },
+          unit_amount: totalCents,
+          product_data: { name: 'Fundraising Donation' },
         },
         quantity: 1,
       }],
       mode: 'payment',
-      payment_intent_data: {
-        application_fee_amount: yourFeeCents, // Your 5% Profit
-        transfer_data: { destination: account_id }, 
-        // FIX: Makes the School pay the Stripe processing fees
-        on_behalf_of: account_id,
+      metadata: {
+        original_submission_id: finalSid
       },
-      success_url: 'https://www.tradecrafteducation.com/pages/success-fundraiser',
+      payment_intent_data: {
+        application_fee_amount: totalApplicationFeeCents,
+        transfer_data: { destination: account_id },
+        metadata: {
+          original_submission_id: finalSid
+        }
+      },
+      success_url: `https://www.tradecrafteducation.com/pages/success-fundraiser?sid=${finalSid}`,
       cancel_url: 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error',
     });
 
     res.redirect(303, session.url);
-
   } catch (err) {
-    console.error("FUNDRAISING BRIDGE ERROR:", err.message);
+    console.error("BRIDGE ERROR:", err.message);
     res.redirect(303, 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error');
   }
 }
