@@ -29,11 +29,11 @@ export default async function handler(req, res) {
     if (baseDonation <= 0) throw new Error("Invalid donation amount");
     if (!account_id) throw new Error("Missing school account ID");
 
-    // "Cover Fees" Logic: Ensuring school gets full base amount
+    // Fee Logic
     const donorSaidYes = cover_fees && cover_fees.toString().toLowerCase().startsWith('y');
     const amountToCharge = donorSaidYes ? (baseDonation + 0.30) / (1 - 0.029) : baseDonation;
     
-    // NEW MATH: 5% Platform Fee (converted to cents)
+    // 5% Platform Fee
     const yourFeeCents = Math.round((baseDonation * 0.05) * 100);
 
     // 5. Create Stripe Session
@@ -52,8 +52,10 @@ export default async function handler(req, res) {
       }],
       mode: 'payment',
       payment_intent_data: {
-        application_fee_amount: yourFeeCents, // Now taking 5%
+        application_fee_amount: yourFeeCents, // Your 5% Profit
         transfer_data: { destination: account_id }, 
+        // FIX: Makes the School pay the Stripe processing fees
+        on_behalf_of: account_id,
       },
       success_url: 'https://www.tradecrafteducation.com/pages/success-fundraiser',
       cancel_url: 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error',
