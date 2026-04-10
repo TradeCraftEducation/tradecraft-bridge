@@ -10,27 +10,23 @@ export default async function handler(req, res) {
     const body =
       typeof req.body === 'string' ? querystring.parse(req.body) : req.body;
 
-    // 1. EXTRACT ALL FIELDS (Including buyer_email for receipts)
+    // 1. EXTRACT DATA
     const {
       grand_total,
       account_id,
-      buyer_email,           // Added for Stripe Receipts
+      buyer_email,           // Crucial for Receipts
       cover_fees,
       typeA,
       original_submission_id,
       submission_id,
     } = body;
 
-    // 2. LOGIC FOR DUAL IDs (Prioritizes Reminder ID over New ID)
     const finalSid = original_submission_id || submission_id;
     const paymentMethod = typeA ? String(typeA).toLowerCase() : '';
 
-    // 3. FILTER OUT MANUAL PAYMENTS
+    // 2. CHECK FOR MANUAL PAYMENTS
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
-      return res.redirect(
-        303,
-        'https://www.tradecrafteducation.com/pages/success-show'
-      );
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-show');
     }
 
     const baseAmount = parseFloat(grand_total) || 0;
@@ -38,27 +34,22 @@ export default async function handler(req, res) {
       throw new Error('Invalid input');
     }
 
-    // 4. MATH: DONOR COVERS STRIPE FEES (3.5% Show Model)
-    const donorSaidYes =
-      cover_fees && String(cover_fees).toLowerCase().startsWith('y');
-
-    const amountToCharge = donorSaidYes
-      ? (baseAmount + 0.30) / (1 - 0.029)
-      : baseAmount;
-
+    // 3. MATH: 3.5% SHOW MODEL
+    const donorSaidYes = cover_fees && String(cover_fees).toLowerCase().startsWith('y');
+    const amountToCharge = donorSaidYes ? (baseAmount + 0.30) / (1 - 0.029) : baseAmount;
     const totalCents = Math.round(amountToCharge * 100);
 
-    // 5. MATH: TRADECRAFT SKIM (Stripe Fee Recovery + 3.5% Profit)
+    // 4. MATH: TRADECRAFT APPLICATION FEE
     const stripeFeeCents = Math.round(totalCents * 0.029 + 30);
     const tradecraftProfitCents = Math.round(baseAmount * 0.035 * 100);
     const totalApplicationFeeCents = stripeFeeCents + tradecraftProfitCents;
 
-    // 6. CREATE STRIPE SESSION
+    // 5. CREATE SESSION WITH RECEIPT TRIGGER
     const session = await stripe.checkout.sessions.create(
       {
         payment_method_types: ['card'],
         mode: 'payment',
-        customer_email: buyer_email, // TRiggers Stripe Receipt to Buyer
+        customer_email: buyer_email, // <--- STRIPE USES THIS FOR THE RECEIPT
         line_items: [
           {
             price_data: {
@@ -73,29 +64,21 @@ export default async function handler(req, res) {
         ],
         payment_intent_data: {
           application_fee_amount: totalApplicationFeeCents,
-          metadata: {
-            original_submission_id: finalSid, // For Webhook tracking
-          },
+          metadata: { original_submission_id: finalSid },
         },
-        metadata: {
-          original_submission_id: finalSid,   // For Success URL tracking
-        },
+        metadata: { original_submission_id: finalSid },
         success_url: `https://www.tradecrafteducation.com/pages/success-show?sid=${finalSid}`,
         cancel_url: 'https://www.tradecrafteducation.com/pages/show-solutions-error',
       },
       {
-        stripeAccount: account_id, // Direct Charge to the County
+        stripeAccount: account_id,
       }
     );
 
-    // 7. REDIRECT TO STRIPE
     return res.redirect(303, session.url);
 
   } catch (err) {
     console.error('BRIDGE ERROR:', err);
-    return res.redirect(
-      303,
-      'https://www.tradecrafteducation.com/pages/show-solutions-error'
-    );
+    return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
   }
 }
