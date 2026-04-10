@@ -107,6 +107,7 @@ export default async function handler(req, res) {
         payment_method_types: ['card'],
 
         mode: 'payment',
+        customer_email: buyer_email, // <--- ADD THIS LINE
 
         line_items: [
 
