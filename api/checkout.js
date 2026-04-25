@@ -14,8 +14,7 @@ export default async function handler(req, res) {
     const {
       grand_total,
       account_id,
-      buyer_email,           // Crucial for Receipts
-      cover_fees,
+      buyer_email,
       typeA,
       original_submission_id,
       submission_id,
@@ -34,22 +33,25 @@ export default async function handler(req, res) {
       throw new Error('Invalid input');
     }
 
-    // 3. MATH: 3.5% SHOW MODEL
-    const donorSaidYes = cover_fees && String(cover_fees).toLowerCase().startsWith('y');
-    const amountToCharge = donorSaidYes ? (baseAmount + 0.30) / (1 - 0.029) : baseAmount;
+    // 3. MATH: FORCED FEE COVERAGE (Donor pays Stripe fees)
+    // We "gross up" the charge so that after Stripe takes 2.9% + $0.30, 
+    // exactly the baseAmount is left.
+    const donorPaysProcessing = true; // Hardcoded to TRUE per your county requirements
+    const amountToCharge = donorPaysProcessing ? (baseAmount + 0.30) / (1 - 0.029) : baseAmount;
     const totalCents = Math.round(amountToCharge * 100);
 
-    // 4. MATH: TRADECRAFT APPLICATION FEE
-    const stripeFeeCents = Math.round(totalCents * 0.029 + 30);
+    // 4. MATH: TRADECRAFT APPLICATION FEE (Your 3.5% Profit Only)
+    // CRITICAL: We DO NOT add stripeFeeCents here. 
+    // This allows Stripe to collect its own fee from the County balance.
     const tradecraftProfitCents = Math.round(baseAmount * 0.035 * 100);
-    const totalApplicationFeeCents = stripeFeeCents + tradecraftProfitCents;
+    const totalApplicationFeeCents = tradecraftProfitCents; 
 
-    // 5. CREATE SESSION WITH RECEIPT TRIGGER
+    // 5. CREATE SESSION
     const session = await stripe.checkout.sessions.create(
       {
         payment_method_types: ['card'],
         mode: 'payment',
-        customer_email: buyer_email, // <--- STRIPE USES THIS FOR THE RECEIPT
+        customer_email: buyer_email,
         line_items: [
           {
             price_data: {
@@ -57,6 +59,7 @@ export default async function handler(req, res) {
               unit_amount: totalCents,
               product_data: {
                 name: 'Show Add-On Donation',
+                description: 'Processing fees included',
               },
             },
             quantity: 1,
