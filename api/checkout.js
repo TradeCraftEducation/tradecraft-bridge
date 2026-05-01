@@ -33,18 +33,13 @@ export default async function handler(req, res) {
       throw new Error('Invalid input');
     }
 
-    // 3. MATH: FORCED FEE COVERAGE (Donor pays Stripe fees)
-    // We "gross up" the charge so that after Stripe takes 2.9% + $0.30, 
-    // exactly the baseAmount is left.
-    const donorPaysProcessing = true; // Hardcoded to TRUE per your county requirements
-    const amountToCharge = donorPaysProcessing ? (baseAmount + 0.30) / (1 - 0.029) : baseAmount;
-    const totalCents = Math.round(amountToCharge * 100);
+    // 3. MATH: ZERO-COST MODEL
+const tradecraftFee = baseAmount * 0.035;
+const amountToCharge = (baseAmount + tradecraftFee + 0.30) / (1 - 0.029);
+const totalCents = Math.round(amountToCharge * 100);
 
-    // 4. MATH: TRADECRAFT APPLICATION FEE (Your 3.5% Profit Only)
-    // CRITICAL: We DO NOT add stripeFeeCents here. 
-    // This allows Stripe to collect its own fee from the County balance.
-    const tradecraftProfitCents = Math.round(baseAmount * 0.035 * 100);
-    const totalApplicationFeeCents = tradecraftProfitCents; 
+// 4. MATH: TRADECRAFT APPLICATION FEE
+const totalApplicationFeeCents = Math.round(tradecraftFee * 100);
 
     // 5. CREATE SESSION
     const session = await stripe.checkout.sessions.create(
