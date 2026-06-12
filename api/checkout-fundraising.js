@@ -2,17 +2,23 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const querystring = require('querystring');
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+  // Accept both GET (Thank You redirect → query string) and POST (form data)
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return res.status(405).send('Method Not Allowed');
+  }
 
   try {
-    let body = typeof req.body === 'string' ? querystring.parse(req.body) : req.body;
+    // Merge query-string and body so it works no matter how the data arrives
+    const bodyParsed = typeof req.body === 'string' ? querystring.parse(req.body) : (req.body || {});
+    const params = { ...(req.query || {}), ...bodyParsed };
+
     const {
       grand_total,        // this IS the donation field (its Jotform ID is grand_total)
       account_id,
       typeA,
       original_submission_id,
       submission_id
-    } = body;
+    } = params;
 
     const finalSid = original_submission_id || submission_id;
     const paymentMethod = typeA ? typeA.toString().toLowerCase() : "";
