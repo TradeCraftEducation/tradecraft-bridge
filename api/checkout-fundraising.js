@@ -4,23 +4,19 @@ const querystring = require('querystring');
 const CAMPAIGN_ACCOUNTS = {
   "hunt-county-fair": "acct_1ABC123XYZ",
   "tri-rivers-fair": "acct_1DEF456UVW",
-  // add one line per campaign as you onboard them
 };
 
 export default async function handler(req, res) {
-  // Accept both GET (Thank You redirect → query string) and POST (form data)
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
-
   try {
-    // Merge query-string and body so it works no matter how the data arrives
     const bodyParsed = typeof req.body === 'string' ? querystring.parse(req.body) : (req.body || {});
     const params = { ...(req.query || {}), ...bodyParsed };
 
     const {
-      grand_total,          // this IS the donation field (its Jotform ID is grand_total)
-      campaign_slug,        // Jotform hidden field — identifies the campaign, NOT the Stripe account
+      grand_total,
+      campaign_slug,
       typeA,
       original_submission_id,
       submission_id
@@ -28,7 +24,6 @@ export default async function handler(req, res) {
 
     const finalSid = original_submission_id || submission_id;
 
-    // Resolve the Stripe connected account server-side — never trust it from the client
     const stripeAccountId = CAMPAIGN_ACCOUNTS[campaign_slug];
     if (!stripeAccountId) {
       console.error("FUND BRIDGE ERROR: unknown campaign_slug", campaign_slug);
@@ -37,13 +32,19 @@ export default async function handler(req, res) {
 
     const paymentMethod = typeA ? typeA.toString().toLowerCase() : "";
 
-    // Redirect for manual payments
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-fundraiser');
     }
 
-    const totalCents = Math.round(parseFloat(grand_total) * 100);   // donation charged to card
-    const platformFeeCents = Math.round(totalCents * 0.05);         // 5% of donation only
+    // Bounds check — catches near-zero and wildly inflated tampered amounts
+    const baseAmount = parseFloat(grand_total) || 0;
+    if (baseAmount < 5 || baseAmount > 9000) {
+      console.error('FUND BRIDGE ERROR: grand_total out of bounds', grand_total);
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error');
+    }
+
+    const totalCents = Math.round(baseAmount * 100);
+    const platformFeeCents = Math.round(totalCents * 0.05);
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
