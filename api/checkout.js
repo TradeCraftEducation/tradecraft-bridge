@@ -35,10 +35,12 @@ export default async function handler(req, res) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-show');
     }
 
-    const baseAmount = parseFloat(grand_total) || 0;
-    if (baseAmount <= 0) {
-      throw new Error('Invalid input');
-    }
+const baseAmount = parseFloat(grand_total) || 0;
+
+if (baseAmount < 20 || baseAmount > 9000) {
+  console.error('BRIDGE ERROR: grand_total out of bounds', grand_total);
+  return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
+}
 
     // 3. RESOLVE STRIPE ACCOUNT SERVER-SIDE — never trust it from the client
     const accountId = COUNTY_ACCOUNTS[show_slug];
