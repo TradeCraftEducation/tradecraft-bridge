@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
     // Bounds check — catches near-zero and wildly inflated tampered amounts
     const baseAmount = parseFloat(grand_total) || 0;
-    if (baseAmount < 5 || baseAmount > 9000) {
+    if (baseAmount < 19 || baseAmount > 15000) {
       console.error('FUND BRIDGE ERROR: grand_total out of bounds', grand_total);
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error');
     }
