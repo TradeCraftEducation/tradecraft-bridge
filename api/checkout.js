@@ -1,5 +1,6 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const querystring = require('querystring');
+const crypto = require('crypto');
 
 const COUNTY_ACCOUNTS = {
   "hunt-county-fair": "acct_1ABC123XYZ",
@@ -7,11 +8,21 @@ const COUNTY_ACCOUNTS = {
   // add one line per county as you onboard them
 };
 
+function verifySig(submissionId, grandTotal, showSlug, sig) {
+  const secret = process.env.PAY_URL_SIGNING_SECRET;
+  if (!secret) throw new Error('PAY_URL_SIGNING_SECRET not set');
+  const payload = `${submissionId}|${grandTotal}|${showSlug}`;
+  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(String(sig || ''));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
-
   try {
     const body =
       typeof req.body === 'string' ? querystring.parse(req.body) : req.body;
@@ -19,29 +30,27 @@ export default async function handler(req, res) {
     // 1. EXTRACT DATA
     const {
       grand_total,
-      show_slug,          // Jotform hidden field, identifies the show only
+      show_slug,
       buyer_email,
       typeA,
       original_submission_id,
       submission_id,
       lots,
-      state,
+      sig,
     } = body;
 
     const finalSid = original_submission_id || submission_id;
-
-    // 2. BLOCK CA — before any other branch, covers card, invoice, and check paths alike
-    const billingState = (state || '').toString().trim().toUpperCase();
-    if (billingState === 'CA') {
-      console.error('BRIDGE BLOCKED: CA billing state', finalSid);
-      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
-    }
-
     const paymentMethod = typeA ? String(typeA).toLowerCase() : '';
 
-    // 3. CHECK FOR MANUAL PAYMENTS
+    // 2. CHECK FOR MANUAL PAYMENTS
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-show');
+    }
+
+    // 3. VERIFY SIGNATURE — reject if grand_total/show_slug was tampered with in the URL
+    if (!verifySig(finalSid, grand_total, show_slug, sig)) {
+      console.error('BRIDGE ERROR: signature mismatch — amount or slug tampered', { finalSid, grand_total, show_slug });
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
     }
 
     const baseAmount = parseFloat(grand_total) || 0;
@@ -65,7 +74,7 @@ export default async function handler(req, res) {
           .split(',')
           .map(lot => {
             const fields = lot.split('|');
-            return fields[1]; // Lot number is the 2nd field (index 1)
+            return fields[1];
           })
           .filter(Boolean)
           .join(',');
