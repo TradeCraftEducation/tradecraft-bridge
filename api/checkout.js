@@ -19,37 +19,45 @@ export default async function handler(req, res) {
     // 1. EXTRACT DATA
     const {
       grand_total,
-      show_slug,          // renamed from account_id — Jotform hidden field, identifies the show only
+      show_slug,          // Jotform hidden field, identifies the show only
       buyer_email,
       typeA,
       original_submission_id,
       submission_id,
       lots,
+      state,
     } = body;
 
     const finalSid = original_submission_id || submission_id;
+
+    // 2. BLOCK CA — before any other branch, covers card, invoice, and check paths alike
+    const billingState = (state || '').toString().trim().toUpperCase();
+    if (billingState === 'CA') {
+      console.error('BRIDGE BLOCKED: CA billing state', finalSid);
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
+    }
+
     const paymentMethod = typeA ? String(typeA).toLowerCase() : '';
 
-    // 2. CHECK FOR MANUAL PAYMENTS
+    // 3. CHECK FOR MANUAL PAYMENTS
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-show');
     }
 
-const baseAmount = parseFloat(grand_total) || 0;
+    const baseAmount = parseFloat(grand_total) || 0;
+    if (baseAmount < 20 || baseAmount > 15000) {
+      console.error('BRIDGE ERROR: grand_total out of bounds', grand_total);
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
+    }
 
-if (baseAmount < 20 || baseAmount > 15000) {
-  console.error('BRIDGE ERROR: grand_total out of bounds', grand_total);
-  return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
-}
-
-    // 3. RESOLVE STRIPE ACCOUNT SERVER-SIDE — never trust it from the client
+    // 4. RESOLVE STRIPE ACCOUNT SERVER-SIDE — never trust it from the client
     const accountId = COUNTY_ACCOUNTS[show_slug];
     if (!accountId) {
       console.error('BRIDGE ERROR: unknown show_slug', show_slug);
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/show-solutions-error');
     }
 
-    // 4. EXTRACT LOT NUMBERS
+    // 5. EXTRACT LOT NUMBERS
     let lotNumbers = '';
     if (lots) {
       try {
@@ -66,21 +74,21 @@ if (baseAmount < 20 || baseAmount > 15000) {
       }
     }
 
-    // 5. MATH: ZERO-COST MODEL
+    // 6. MATH: ZERO-COST MODEL
     const tradecraftFee = baseAmount * 0.035;
     const amountToCharge = (baseAmount + tradecraftFee + 0.30) / (1 - 0.029);
     const totalCents = Math.round(amountToCharge * 100);
 
-    // 6. MATH: TRADECRAFT APPLICATION FEE
+    // 7. MATH: TRADECRAFT APPLICATION FEE
     const totalApplicationFeeCents = Math.round(tradecraftFee * 100);
 
-    // 7. BUILD METADATA
+    // 8. BUILD METADATA
     const metadata = {
       original_submission_id: finalSid,
       lot_numbers: lotNumbers,
     };
 
-    // 8. CREATE SESSION
+    // 9. CREATE SESSION
     const session = await stripe.checkout.sessions.create(
       {
         payment_method_types: ['card'],
