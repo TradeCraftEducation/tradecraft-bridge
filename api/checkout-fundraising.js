@@ -10,6 +10,7 @@ export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).send('Method Not Allowed');
   }
+
   try {
     const bodyParsed = typeof req.body === 'string' ? querystring.parse(req.body) : (req.body || {});
     const params = { ...(req.query || {}), ...bodyParsed };
@@ -19,10 +20,18 @@ export default async function handler(req, res) {
       campaign_slug,
       typeA,
       original_submission_id,
-      submission_id
+      submission_id,
+      state
     } = params;
 
     const finalSid = original_submission_id || submission_id;
+
+    // Block CA before any other branch runs — covers card, invoice, and check paths alike
+    const billingState = (state || '').toString().trim().toUpperCase();
+    if (billingState === 'CA') {
+      console.error('FUND BRIDGE BLOCKED: CA billing state', finalSid);
+      return res.redirect(303, 'https://www.tradecrafteducation.com/pages/fundraising-solutions-error');
+    }
 
     const stripeAccountId = CAMPAIGN_ACCOUNTS[campaign_slug];
     if (!stripeAccountId) {
@@ -31,7 +40,6 @@ export default async function handler(req, res) {
     }
 
     const paymentMethod = typeA ? typeA.toString().toLowerCase() : "";
-
     if (paymentMethod.includes('invoice') || paymentMethod.includes('check')) {
       return res.redirect(303, 'https://www.tradecrafteducation.com/pages/success-fundraiser');
     }
